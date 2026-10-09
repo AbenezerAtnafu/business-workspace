@@ -33,6 +33,7 @@ x-mail-env: &mail-env
 
 services:
   postgres:
+    restart: unless-stopped
     image: postgres:16
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -47,8 +48,9 @@ services:
   # One-shot: apply migrations 000…NNN, then exit. Everything that reads the
   # database waits for it to finish.
   migrate:
-    build: ../../backend
+    build: { context: ../../backend, target: prod }
     command: ["node", "scripts/run-migrate.js"]
+    healthcheck: { disable: true }
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/business_workspace
     depends_on:
@@ -56,7 +58,8 @@ services:
     networks: [internal]
 
   api:
-    build: ../../backend
+    build: { context: ../../backend, target: prod }
+    init: true
     environment:
       NODE_ENV: production
       PORT: "3000"
@@ -69,6 +72,9 @@ services:
       COOKIE_DOMAIN: ${COOKIE_DOMAIN}
       COOKIE_SECURE: ${COOKIE_SECURE}
       APP_BASE_URL: ${APP_BASE_URL}
+      # Set when a reverse proxy (TLS, :443) sits in front of the API — see
+      # .env.example. Unset = per-IP rate limits use the connecting address.
+      TRUST_PROXY: ${TRUST_PROXY:-}
       # App email (invites, password resets) goes through the platform's own
       # Postfix (internal port), so it is DKIM-signed and relayed like any mail.
       SMTP_RELAY_HOST: postfix
@@ -88,36 +94,49 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
     ports: ["${API_PORT:-3000}:3000"]
+    restart: unless-stopped
     networks: [internal]
 
   web:
     build:
       context: ../../frontend
+      target: prod
       args:
         NEXT_PUBLIC_API_BASE_URL: ${PUBLIC_API_URL}
-    depends_on: [api]
+    init: true
+    depends_on:
+      api: { condition: service_healthy }
     ports: ["${WEB_PORT:-3001}:3001"]
+    restart: unless-stopped
     networks: [internal]
 
   # Writes each verified domain's DKIM key where Rspamd signs from (every 60 s).
   dkim-sync:
-    build: ../../backend
+    build: { context: ../../backend, target: prod }
+    init: true
+    healthcheck: { disable: true }
+    restart: unless-stopped
     command: ["node", "scripts/export-dkim-keys.mjs", "--out", "/var/lib/rspamd/dkim", "--watch", "60"]
     user: root
     environment:
       DKIM_EXPORT_DATABASE_URL: postgres://dkim_exporter:${DKIM_EXPORTER_PASSWORD}@postgres:5432/business_workspace
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      # Keys are 0640; Rspamd reads them through this group (_rspamd, pinned
+      # to 5001 in infra/mail/Dockerfile).
+      DKIM_KEY_GROUP: "5001"
     volumes: [dkim-keys:/var/lib/rspamd/dkim]
     depends_on:
       migrate: { condition: service_completed_successfully }
     networks: [internal]
 
   redis:
+    restart: unless-stopped
     image: redis:7
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     networks: [internal]
 
   rspamd:
+    restart: unless-stopped
     build: { context: ../mail, target: rspamd }
     environment: *mail-env
     volumes: [dkim-keys:/var/lib/rspamd/dkim]
@@ -125,6 +144,7 @@ services:
     networks: [internal]
 
   dovecot:
+    restart: unless-stopped
     build: { context: ../mail, target: dovecot }
     environment: *mail-env
     volumes:
@@ -139,6 +159,7 @@ services:
     networks: [internal]
 
   postfix:
+    restart: unless-stopped
     build: { context: ../mail, target: postfix }
     environment: *mail-env
     volumes: [mail-tls:/etc/ssl/mail]

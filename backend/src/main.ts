@@ -1,12 +1,25 @@
 import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
 import { text } from 'express';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // Behind a reverse proxy / load balancer, every request arrives from the
+  // proxy's address, so req.ip — which keys every per-IP rate limit (ADR-010,
+  // ADR-011) — would be the same for all clients. TRUST_PROXY hands Express's
+  // `trust proxy` setting the hops/addresses to trust X-Forwarded-For from:
+  // a hop count ("1"), or addresses/presets ("loopback, uniquelocal").
+  // Unset = trust nothing (direct exposure, local dev). Never set it when the
+  // API is reachable directly, or clients can spoof their IP.
+  const trustProxy = process.env.TRUST_PROXY?.trim();
+  if (trustProxy) app.set('trust proxy', /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy);
+  // Containers stop with SIGTERM: close the HTTP server and the pg pools
+  // (OnModuleDestroy) cleanly instead of being killed after the timeout.
+  app.enableShutdownHooks();
 
   // credentials: true so the httpOnly refresh cookie (architecture/api-contract.md
   // §0) round-trips from the frontend's own origin; tighten `origin` beyond

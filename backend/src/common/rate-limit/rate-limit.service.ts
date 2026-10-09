@@ -75,8 +75,8 @@ interface RateLimitRow {
  * account; it does not stop a distributed attack across many IPs, or one IP
  * spraying many accounts — that's an edge/WAF concern, noted in
  * claude/build-progress.md. `ip` comes from Express `req.ip`, so a deployment
- * behind a proxy/load balancer must set Express's `trust proxy`, or every
- * client shares the proxy's IP.
+ * behind a proxy/load balancer must set TRUST_PROXY (main.ts → Express's
+ * `trust proxy`), or every client shares the proxy's IP.
  */
 @Injectable()
 export class RateLimitService {

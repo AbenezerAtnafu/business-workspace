@@ -8,6 +8,8 @@
 #
 # Expects Postgres reachable at MAIL_DB_HOST with migrations 000–015 applied.
 # Environment variables are the ones documented in infra/mail/render.sh.
+# DKIM keys: run backend/scripts/export-dkim-keys.mjs --out $DKIM_KEY_DIR
+# --group _rspamd (keys are 0640; Rspamd reads them through its group).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

@@ -5,7 +5,10 @@
 # Based on ubuntu:24.04 deliberately: the exact package versions the stack was
 # verified with natively (Postfix 3.8, Dovecot 2.3.21, Rspamd 3.8) — see
 # infra/scripts/native-up.sh and backend/scripts/mail-live-test.mjs.
-FROM ubuntu:24.04 AS base
+# UBUNTU_IMAGE is an argument only so the images can be built against a mirror
+# or a locally built base; leave it at the default otherwise.
+ARG UBUNTU_IMAGE=ubuntu:24.04
+FROM ${UBUNTU_IMAGE} AS base
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gettext-base openssl ca-certificates tini \
@@ -39,9 +42,17 @@ HEALTHCHECK --interval=30s --timeout=5s CMD doveadm service status >/dev/null ||
 ENTRYPOINT ["tini", "--", "/entrypoint.sh"]
 
 FROM base AS rspamd
+# The _rspamd user/group are moved to fixed ids (5001) after the package
+# creates them with whatever system ids are free, so the dkim-sync container
+# can hand Rspamd the 0640 key files by a known gid: DKIM_KEY_GROUP=5001 in
+# infra/compose. (Pre-creating the user instead makes the postinst fail.)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends rspamd \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && old_uid=$(id -u _rspamd) old_gid=$(id -g _rspamd) \
+ && groupmod -g 5001 _rspamd && usermod -u 5001 -g 5001 _rspamd \
+ && find / -xdev \( -uid "$old_uid" -o -gid "$old_gid" \) -exec chown -h _rspamd:_rspamd {} + \
+ && id _rspamd
 COPY entrypoints/rspamd.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 EXPOSE 11332

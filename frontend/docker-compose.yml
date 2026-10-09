@@ -1,0 +1,32 @@
+# Frontend on its own, for development (ADR-012):
+#
+#   docker compose up --build      # http://localhost:3001, hot reload
+#
+# It needs the API running somewhere the BROWSER can reach — by default
+# http://localhost:3000, which is where the backend repo's own
+# `docker compose up` (or `pnpm start:dev`) serves it. Point it elsewhere
+# with NEXT_PUBLIC_API_BASE_URL in your shell or in .env.
+#
+# File watching uses polling (WATCHPACK_POLLING): filesystem events don't
+# reliably cross a bind mount, polling always works. Set it to false if the
+# CPU cost bothers you and reloads still happen without it.
+# The full stack (API, web, mail server) lives in ../infra/compose.
+name: bw-frontend
+
+services:
+  web:
+    build: { context: ., target: dev }
+    init: true
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3000}
+      WATCHPACK_POLLING: ${WATCHPACK_POLLING:-true}
+    volumes:
+      - ./app:/app/app
+      - ./components:/app/components
+      - ./lib:/app/lib
+      # Next writes its build cache here; keep it in the container, not your folder.
+      - next-cache:/app/.next
+    ports: ["${WEB_PORT:-3001}:3001"]
+
+volumes:
+  next-cache:

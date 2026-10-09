@@ -17,17 +17,48 @@ Project docs — this repo doesn't duplicate them).
 
 ## Getting started
 
+### With Docker (nothing else to install)
+
 ```bash
-cp .env.example .env    # fill in a real DATABASE_URL
-npm install
-npm run start:dev
+docker compose up --build          # Postgres + migrations + API on :3000
 ```
 
-Database schema is not yet wired to a migration runner —
-`src/database/migrations/` holds the raw SQL in the order it must run (see
-that folder's own README). Picking the actual migration tool
-(node-pg-migrate, Prisma migrate, Flyway, plain `psql -f`, ...) is part of
-Step 1.1 in the implementation plan and is still open.
+- The API runs `nest start --watch`; `./src` is mounted, so edits reload.
+- Postgres is published on **5433** (not 5432), so it can't clash with one already on your machine:
+  `psql postgres://postgres:postgres@localhost:5433/business_workspace`.
+- App email (invites, password resets) is caught by Mailpit: http://localhost:8025.
+- `docker compose run --rm migrate` applies new migrations; `docker compose down -v` wipes the database.
+- `GET /api/v1/health` returns `{"status":"ok","database":"ok"}` (503 if Postgres is unreachable).
+
+### Without Docker
+
+```bash
+cp .env.example .env    # DATABASE_URL, APP_DATABASE_URL, APP_BOOTSTRAP_DATABASE_URL, secrets
+pnpm install
+pnpm migrate            # applies src/database/migrations/*.sql in order (scripts/run-migrate.js)
+pnpm start:dev
+```
+
+### Tests against a running API
+
+- `pnpm test:live` runs the API suite. It reads invite links from the dev mailer log (`API_LOG`), or from Mailpit when `MAILPIT_URL` is set.
+- `pnpm test:mail` runs the mail-server suite against the mail stack in `../infra`.
+
+### Image
+
+`Dockerfile` has two targets:
+
+- `dev`: what `docker-compose.yml` uses.
+- `prod` (default): compiled `dist` and production dependencies only, run as the `node` user, with a healthcheck.
+
+The same prod image runs the one-shot jobs:
+
+- `node scripts/run-migrate.js`
+- `node scripts/export-dkim-keys.mjs`
+
+Behind a reverse proxy, set `TRUST_PROXY` (see `.env.example`). Otherwise every client shares the proxy's IP for rate limiting.
+
+The full stack with the mail server is in `../infra/compose`.
 
 ## Module map
 

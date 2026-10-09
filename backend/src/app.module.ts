@@ -13,6 +13,7 @@ import { AutodiscoveryModule } from './modules/autodiscovery/autodiscovery.modul
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { HealthModule } from './modules/health/health.module';
 
 // Role-based access control (RolesGuard, @Roles()) was built directly into
 // AuthModule during Step 1.5 — there is no separate RbacModule.
@@ -51,6 +52,7 @@ import { AdminModule } from './modules/admin/admin.module';
     NotificationsModule,
     AuditLogsModule,
     AdminModule,
+    HealthModule,
   ],
 })
 export class AppModule {}

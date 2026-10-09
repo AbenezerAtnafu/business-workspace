@@ -14,6 +14,23 @@ npm run dev                  # http://localhost:3001 — matches the backend's A
 
 Other scripts: `npm run build`, `npm run lint`, `npm run typecheck`.
 
+### With Docker
+
+```bash
+docker compose up --build    # next dev on http://localhost:3001, hot reload
+```
+
+`app/`, `components/` and `lib/` are mounted, and file watching uses polling. The API must be reachable from the browser at `NEXT_PUBLIC_API_BASE_URL` (default http://localhost:3000). That is where the backend repo's own `docker compose up` serves it.
+
+The `prod` target (default) is Next.js's standalone server only. It has no `node_modules` tree, runs as the `node` user and has a healthcheck. `NEXT_PUBLIC_API_BASE_URL` is a **build** argument, because Next inlines it into the browser bundle, so changing it means rebuilding:
+
+```bash
+docker build --build-arg NEXT_PUBLIC_API_BASE_URL=https://api.example.com -t bw-web .
+docker run -p 3001:3001 bw-web
+```
+
+The full stack is in `../infra/compose`.
+
 ## Status
 
 | Area | State |

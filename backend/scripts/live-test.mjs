@@ -8,7 +8,9 @@
 // that can't happen through the API in a sandbox (force-verifying a domain,
 // since there's no real DNS; expiring a rate-limit lock), and the API's log
 // at API_LOG (default /tmp/api.log) to read invite links the dev mailer logs
-// instead of sending. Creates fresh, uniquely-named orgs each run.
+// instead of sending — or, when the API really sends (the compose stack:
+// API → Postfix → Mailpit), MAILPIT_URL to read them from Mailpit instead.
+// Creates fresh, uniquely-named orgs each run.
 //
 // Added 2026-10-07 alongside the reconstruction of the Step 2.3–3.1 files
 // and the PATCH /me, PATCH /me/password, signup-409 and rate-limit work.
@@ -20,6 +22,31 @@ import { generate } from 'otplib';
 
 const API = (process.env.API_URL ?? 'http://localhost:3000') + '/api/v1';
 const API_LOG = process.env.API_LOG ?? '/tmp/api.log';
+const MAILPIT_URL = process.env.MAILPIT_URL;
+
+/** Every invite token sent so far, oldest first: from Mailpit, or the dev mailer log. */
+async function inviteTokens() {
+  let text = '';
+  if (MAILPIT_URL) {
+    const list = await (await fetch(`${MAILPIT_URL}/api/v1/search?query=${encodeURIComponent('subject:invited')}&limit=500`)).json();
+    for (const m of [...list.messages].reverse()) {
+      text += (await (await fetch(`${MAILPIT_URL}/api/v1/message/${m.ID}`)).json()).Text + '\n';
+    }
+  } else if (fs.existsSync(API_LOG)) {
+    text = fs.readFileSync(API_LOG, 'utf8');
+  }
+  return [...text.matchAll(/accept-invite\?token=([0-9a-f]{64})/g)].map((m) => m[1]);
+}
+
+/** Waits (up to 15 s — real delivery goes through Postfix) for a token not in `before`. */
+async function newInviteTokens(before) {
+  for (let i = 0; i < 50; i++) {
+    const now = (await inviteTokens()).filter((t) => !before.includes(t));
+    if (now.length) return now;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return [];
+}
 const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
 await db.connect();
 
@@ -72,7 +99,10 @@ const code = (r) => r.body?.error?.code;
 
 // ADR-011 quota keys, same derivation as RateLimitService.key(). Requests
 // from this script arrive from localhost under one of these spellings.
-const LOCAL_IPS = ['::1', '::ffff:127.0.0.1', '127.0.0.1'];
+// Addresses this test's requests can arrive from, to find its own rate-limit
+// keys. Through a published Docker port the API sees the bridge gateway
+// instead (compose stack: LIVE_TEST_CLIENT_IPS=172.28.0.1,::ffff:172.28.0.1).
+const LOCAL_IPS = ['::1', '::ffff:127.0.0.1', '127.0.0.1', ...(process.env.LIVE_TEST_CLIENT_IPS ?? '').split(',').map((s) => s.trim()).filter(Boolean)];
 const quotaKey = (scope, identifier, ip) =>
   createHash('sha256').update(`${scope}|${identifier.trim().toLowerCase()}|${ip}`).digest('hex');
 const localKeys = (scope, identifier) => LOCAL_IPS.map((ip) => quotaKey(scope, identifier, ip));
@@ -318,12 +348,11 @@ section('Notifications (user_joined, password_reissued, list/paginate/read)');
   const memberId = created.body.userId;
 
   // Path A: invite → accept → admins get user_joined.
+  const before = await inviteTokens();
   const inv = await A.c.post('/users/invite', { domainId, localPart: 'john', contactEmail: `john-${run}@external.test`, role: 'admin' });
   check('POST /users/invite → 201', inv.status === 201, inv);
-  await new Promise((r) => setTimeout(r, 300));
-  const log = fs.existsSync(API_LOG) ? fs.readFileSync(API_LOG, 'utf8') : '';
-  const token = [...log.matchAll(/accept-invite\?token=([0-9a-f]{64})/g)].pop()?.[1];
-  check('invite link found in dev mailer log', !!token, API_LOG);
+  const token = (await newInviteTokens(before)).pop();
+  check('invite link found in the sent email', !!token, MAILPIT_URL ?? API_LOG);
   const john = new Client();
   const acc = await john.post(`/invites/${token}/accept`, { name: 'John D', password: PW });
   check('invite accept → 201', acc.status === 201, acc);
@@ -502,9 +531,9 @@ section('Org units & groups (2026-10-07: delete guards, deleted users, group mai
   await F.c.del(`/invites/${inv.body.inviteId}`);
 
   // Accepted invite + deleted user still referencing the unit → delete now succeeds.
+  const before2 = await inviteTokens();
   const inv2 = await F.c.post('/users/invite', { domainId: dom, localPart: 'joe', contactEmail: `joe-${run}@external.test`, orgUnitId: be.body.id });
-  await new Promise((r) => setTimeout(r, 300));
-  const token = [...fs.readFileSync(API_LOG, 'utf8').matchAll(/accept-invite\?token=([0-9a-f]{64})/g)].map((m) => m[1]);
+  const token = await newInviteTokens(before2);
   let joeToken;
   for (const t of token.reverse()) {
     const pv = await new Client().get(`/invites/${t}`);

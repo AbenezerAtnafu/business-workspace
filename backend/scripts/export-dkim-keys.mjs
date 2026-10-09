@@ -4,6 +4,7 @@
 //
 //   node scripts/export-dkim-keys.mjs --out /var/lib/rspamd/dkim            # once
 //   node scripts/export-dkim-keys.mjs --out /var/lib/rspamd/dkim --watch 60  # loop
+//   … --group _rspamd   (or a numeric gid; env DKIM_KEY_GROUP)
 //
 // Keys are stored encrypted (AES-256-GCM, EncryptionService) in
 // control.domains.dkim_private_key; this is the one place they are decrypted
@@ -11,7 +12,13 @@
 // `dkim_exporter` role (migration 015), which can read exactly one view,
 // mail.dkim_keys — verified domains of active orgs, encrypted keys only.
 //
-// Files are written atomically (temp + rename) with mode 0640. Keys of domains
+// Files are written atomically (temp + rename) with mode 0640, so the signer
+// can only read them through their GROUP: pass --group (the signer's group
+// name or gid) when this runs as a different user than the signer — in
+// compose the exporter runs as root and Rspamd as _rspamd (gid 5001, pinned
+// in infra/mail/Dockerfile). Without it a root-owned 0640 key is unreadable
+// to Rspamd and mail goes out unsigned (found 2026-10-09 in the compose
+// stack). Keys of domains
 // that are no longer verified, or were removed, are deleted, so a removed
 // domain stops being signed for on the next pass.
 import 'dotenv/config';
@@ -27,6 +34,7 @@ const arg = (name, fallback) => {
 };
 const OUT = arg('--out', process.env.DKIM_KEY_DIR ?? '/var/lib/rspamd/dkim');
 const WATCH = Number(arg('--watch', '0'));
+const GROUP = arg('--group', process.env.DKIM_KEY_GROUP);
 const DB_URL = process.env.DKIM_EXPORT_DATABASE_URL;
 const KEY = createHash('sha256').update(process.env.ENCRYPTION_KEY ?? '').digest();
 
@@ -46,9 +54,25 @@ function decrypt(stored) {
   return Buffer.concat([d.update(data), d.final()]).toString('utf8');
 }
 
+/** Group name or numeric gid → gid (names via /etc/group; no native lookup in Node). */
+function resolveGid(group) {
+  if (group === undefined || group === '') return undefined;
+  if (/^\d+$/.test(group)) return Number(group);
+  const line = fs.readFileSync('/etc/group', 'utf8').split('\n').find((l) => l.split(':')[0] === group);
+  if (!line) {
+    console.error(`export-dkim-keys: unknown group "${group}" — pass a numeric gid instead`);
+    process.exit(1);
+  }
+  return Number(line.split(':')[2]);
+}
+const GID = resolveGid(GROUP);
+
 function writeAtomic(file, content, mode = 0o640) {
   const tmp = `${file}.tmp-${process.pid}`;
   fs.writeFileSync(tmp, content, { mode });
+  // chmod again: writeFileSync's mode is filtered by the umask.
+  fs.chmodSync(tmp, mode);
+  if (GID !== undefined) fs.chownSync(tmp, -1, GID); // before rename: never visible with the wrong group
   fs.renameSync(tmp, file);
 }
 

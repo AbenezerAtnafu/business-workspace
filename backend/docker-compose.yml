@@ -1,0 +1,76 @@
+# Backend on its own, for development (ADR-012):
+#
+#   docker compose up --build          # API on :3000, hot reload from ./src
+#   docker compose run --rm migrate    # re-run migrations after adding one
+#   docker compose down -v             # wipe the database too
+#
+# Postgres is published on 5433 (not 5432) so it can't collide with a
+# Postgres already running on your machine. App email (invites, resets) is
+# caught by Mailpit: http://localhost:8025.
+#
+# Values come from the defaults below; to override one, set it in your shell
+# or in .env (Compose reads .env for ${…} substitution — the DB URLs here are
+# fixed on purpose, so your local-dev DATABASE_URL in .env is not used).
+# The full stack with the mail server lives in ../infra/compose.
+name: bw-backend
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: business_workspace
+    ports: ["${POSTGRES_PORT:-5433}:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d business_workspace"]
+      interval: 3s
+      retries: 30
+
+  migrate:
+    build: { context: ., target: dev }
+    command: ["node", "scripts/run-migrate.js"]
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/business_workspace
+    volumes: [./src/database/migrations:/app/src/database/migrations:ro]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    build: { context: ., target: dev }
+    init: true
+    environment:
+      NODE_ENV: development
+      PORT: "3000"
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/business_workspace
+      APP_DATABASE_URL: postgres://app_user:app_user_dev_password@postgres:5432/business_workspace
+      APP_BOOTSTRAP_DATABASE_URL: postgres://app_bootstrap:app_bootstrap_dev_password@postgres:5432/business_workspace
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-access-secret}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev-refresh-secret}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev-encryption-key}
+      COOKIE_DOMAIN: localhost
+      COOKIE_SECURE: "false"
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3001}
+      SMTP_RELAY_HOST: mailpit
+      SMTP_RELAY_PORT: "1025"
+      ATTACHMENT_STORAGE_DIR: /tmp/attachments
+      # Local signups all come from one IP; don't trip the signup quota.
+      RATE_LIMIT_SIGNUPS_PER_IP_PER_HOUR: ${RATE_LIMIT_SIGNUPS_PER_IP_PER_HOUR:-1000}
+    volumes:
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+    ports: ["${API_PORT:-3000}:3000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      mailpit: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      start_period: 60s
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["${MAILPIT_UI_PORT:-8025}:8025"]
+
+volumes:
+  pgdata:
