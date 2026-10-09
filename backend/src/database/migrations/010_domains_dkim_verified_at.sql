@@ -1,0 +1,26 @@
+-- Step 2.2 (Custom Domains) — a real schema gap found while building
+-- DomainsService, not anticipated in architecture/data-model.md's original
+-- control.domains table.
+--
+-- architecture/domain-and-email-flow.md step 5 is explicit that "ownership
+-- verification and DKIM verification are tracked and surfaced separately."
+-- But the original schema only ever gave ownership a tracked, persisted
+-- state transition (verification_status + verified_at) — DKIM only has
+-- dkim_public_key/dkim_private_key/dkim_selector, i.e. whether a key pair
+-- was *generated*, with no column for whether the customer has actually
+-- *published* the DKIM TXT record yet. Without this, GET /domains and GET
+-- /domains/{domainId} (api-contract.md §6: "Domain detail incl. DKIM
+-- status") would have no honest, cheap way to report a "verified" DKIM
+-- state without re-running a live DNS lookup on every single read — which
+-- defeats the point of /dns-records being the one endpoint documented to
+-- do live, per-record checks.
+--
+-- dkim_verified_at is set by POST /domains/{id}/verify (the same
+-- manual-trigger endpoint that re-checks ownership) whenever its own live
+-- DKIM TXT lookup matches, and cleared back to NULL when it doesn't —
+-- deliberately NOT sticky the way verification_status is, because DKIM
+-- absence doesn't gate inbound mail acceptance the way ownership does (see
+-- domain-and-email-flow.md step 5: "a domain can be verified ... before
+-- DKIM propagates"), so there's no live-mail-breaking risk in keeping this
+-- one honestly live rather than one-way.
+ALTER TABLE control.domains ADD COLUMN dkim_verified_at TIMESTAMPTZ;

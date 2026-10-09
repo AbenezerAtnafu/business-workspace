@@ -1,0 +1,15 @@
+driver = pgsql
+connect = host=${MAIL_DB_HOST} port=${MAIL_DB_PORT} dbname=${MAIL_DB_NAME} user=${MAIL_DB_USER} password=${MAIL_DB_PASSWORD}
+default_pass_scheme = ARGON2ID
+
+# Mail-client / SASL login (personal mailboxes only — see migration 015).
+password_query = SELECT login AS user, '{ARGON2ID}' || password_hash AS password \
+  FROM mail.logins WHERE login = lower('%u')
+
+# Any deliverable mailbox, personal or shared: used by LMTP delivery, by
+# logins, and by the API's master-user access.
+user_query = SELECT '${MAIL_ROOT}/' || maildir AS home, ${MAIL_UID} AS uid, ${MAIL_GID} AS gid, \
+  '*:bytes=' || quota_bytes AS quota_rule \
+  FROM mail.mailboxes WHERE address = lower('%u')
+
+iterate_query = SELECT address AS user FROM mail.mailboxes

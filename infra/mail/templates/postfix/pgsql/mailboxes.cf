@@ -1,0 +1,6 @@
+hosts = ${MAIL_DB_HOST}:${MAIL_DB_PORT}
+dbname = ${MAIL_DB_NAME}
+user = ${MAIL_DB_USER}
+password = ${MAIL_DB_PASSWORD}
+# Result is only used as "exists"; delivery goes over LMTP to Dovecot.
+query = SELECT 'OK' FROM mail.mailboxes WHERE address = lower('%s')

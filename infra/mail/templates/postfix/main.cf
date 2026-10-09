@@ -1,0 +1,75 @@
+# Postfix main.cf — rendered from infra/mail/templates (ADR-012). Do not edit
+# the rendered copy; edit the template and re-render.
+compatibility_level = 3.6
+myhostname = ${MAIL_HOSTNAME}
+myorigin = $myhostname
+mydestination = localhost
+# Only these networks may relay without authentication (loopback; the internal
+# API submission port overrides this for itself in master.cf).
+mynetworks = 127.0.0.0/8 [::1]/128
+inet_interfaces = all
+inet_protocols = ${MAIL_INET_PROTOCOLS}
+biff = no
+append_dot_mydomain = no
+smtputf8_enable = no
+maillog_file = /dev/stdout
+
+# --- Hosted domains, live from Postgres (migration 015 views) ---------------
+virtual_mailbox_domains = pgsql:/etc/postfix/pgsql/domains.cf
+virtual_mailbox_maps    = pgsql:/etc/postfix/pgsql/mailboxes.cf
+virtual_alias_maps      = pgsql:/etc/postfix/pgsql/aliases.cf
+virtual_transport       = lmtp:inet:${DOVECOT_HOST}:${DOVECOT_LMTP_PORT}
+smtpd_sender_login_maps = pgsql:/etc/postfix/pgsql/sender_logins.cf
+
+# 100 MB attachments (business-rules) grow ~37% as base64 MIME.
+message_size_limit = 140000000
+mailbox_size_limit = 0
+
+# --- Inbound (port 25) policy ---------------------------------------------
+# Unknown domains: "Relay access denied"; unknown or suspended mailboxes at a
+# hosted domain: "User unknown" — both rejected at RCPT TO, never accepted and
+# dropped (domain-and-email-flow.md).
+# Port 25 trusts nobody: not even loopback may relay through it (the API has
+# its own internal port). Order matters — a non-hosted domain gets a definite
+# "Relay access denied" before any DNS lookup could turn it into a 4xx.
+# Mailbox-full is checked at RCPT TO via Dovecot's quota-status service, so the
+# sender gets "552 Mailbox is full" instead of a later bounce. (It also rejects
+# a message whose announced SIZE won't fit; for clients that don't announce
+# one, Dovecot's LMTP still enforces the quota on delivery.)
+smtpd_helo_required = yes
+smtpd_recipient_restrictions =
+    reject_non_fqdn_recipient,
+    reject_unauth_destination,
+    reject_unlisted_recipient,
+    check_policy_service inet:${DOVECOT_HOST}:${DOVECOT_QUOTA_STATUS_PORT}
+smtpd_relay_restrictions = reject_unauth_destination
+unknown_virtual_mailbox_reject_code = 550
+unverified_recipient_reject_code = 550
+
+# --- Content filtering: Rspamd milter (spam, SPF/DKIM/DMARC checks, DKIM signing)
+smtpd_milters = ${MILTERS}
+non_smtpd_milters = ${MILTERS}
+milter_protocol = 6
+milter_mail_macros = i {mail_addr} {client_addr} {client_name} {auth_authen}
+milter_default_action = ${MILTER_DEFAULT_ACTION}
+
+# --- TLS -------------------------------------------------------------------
+smtpd_tls_cert_file = ${TLS_CERT_FILE}
+smtpd_tls_key_file  = ${TLS_KEY_FILE}
+smtpd_tls_security_level = may
+smtpd_tls_auth_only = yes
+smtpd_tls_loglevel = 1
+smtp_tls_security_level = ${RELAY_TLS_LEVEL}
+smtp_tls_loglevel = 1
+
+# --- SASL (submission only; enabled per-service in master.cf) --------------
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = inet:${DOVECOT_HOST}:${DOVECOT_AUTH_PORT}
+smtpd_sasl_auth_enable = no
+
+# --- Outbound: relay / smart host during the bootstrap period (ADR-002) ----
+relayhost = ${RELAY_HOST}
+smtp_sasl_auth_enable = ${RELAY_SASL_ENABLE}
+smtp_sasl_password_maps = texthash:/etc/postfix/relay_passwd
+smtp_sasl_security_options = noanonymous
+smtp_sasl_tls_security_options = noanonymous

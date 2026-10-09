@@ -1,0 +1,5 @@
+hosts = ${MAIL_DB_HOST}:${MAIL_DB_PORT}
+dbname = ${MAIL_DB_NAME}
+user = ${MAIL_DB_USER}
+password = ${MAIL_DB_PASSWORD}
+query = SELECT target_address FROM mail.aliases WHERE address = lower('%s')

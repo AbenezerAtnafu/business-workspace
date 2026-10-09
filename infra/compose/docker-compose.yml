@@ -1,0 +1,178 @@
+# Business Workspace — full stack on one machine (ADR-012).
+#
+#   cd infra/compose && cp .env.example .env   # then edit secrets
+#   docker compose up -d --build
+#   docker compose --profile av up -d          # + ClamAV (needs ~2 GB RAM)
+#
+# Same images for a laptop, a shared dev server and a single-VM deployment;
+# only .env differs. The mail containers render their config from the same
+# templates that infra/scripts/native-up.sh uses, which is what
+# backend/scripts/mail-live-test.mjs verifies.
+name: business-workspace
+
+x-mail-env: &mail-env
+  MAIL_HOSTNAME: ${MAIL_HOSTNAME}
+  MAIL_DB_HOST: postgres
+  MAIL_DB_PORT: "5432"
+  MAIL_DB_NAME: business_workspace
+  MAIL_DB_USER: mail_reader
+  MAIL_DB_PASSWORD: ${MAIL_READER_PASSWORD}
+  DOVECOT_HOST: dovecot
+  RSPAMD_HOST: rspamd
+  REDIS_HOST: redis
+  INTERNAL_SUBMIT_NETWORKS: ${INTERNAL_SUBNET}
+  RSPAMD_LOCAL_ADDRS: '"${INTERNAL_SUBNET}"'
+  DOVECOT_MASTER_ALLOW_NETS: ${INTERNAL_SUBNET}
+  DOVECOT_MASTER_PASSWORD: ${DOVECOT_MASTER_PASSWORD}
+  RELAY_HOST: ${RELAY_HOST}
+  RELAY_USER: ${RELAY_USER:-}
+  RELAY_PASSWORD: ${RELAY_PASSWORD:-}
+  RELAY_TLS_LEVEL: ${RELAY_TLS_LEVEL:-may}
+  CLAMAV_MILTER: ${CLAMAV_MILTER:-}
+  MILTER_DEFAULT_ACTION: ${MILTER_DEFAULT_ACTION:-tempfail}
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: business_workspace
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d business_workspace"]
+      interval: 5s
+      retries: 20
+    networks: [internal]
+
+  # One-shot: apply migrations 000…NNN, then exit. Everything that reads the
+  # database waits for it to finish.
+  migrate:
+    build: ../../backend
+    command: ["node", "scripts/run-migrate.js"]
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/business_workspace
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [internal]
+
+  api:
+    build: ../../backend
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/business_workspace
+      APP_DATABASE_URL: postgres://app_user:${APP_USER_PASSWORD}@postgres:5432/business_workspace
+      APP_BOOTSTRAP_DATABASE_URL: postgres://app_bootstrap:${APP_BOOTSTRAP_PASSWORD}@postgres:5432/business_workspace
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN}
+      COOKIE_SECURE: ${COOKIE_SECURE}
+      APP_BASE_URL: ${APP_BASE_URL}
+      # App email (invites, password resets) goes through the platform's own
+      # Postfix (internal port), so it is DKIM-signed and relayed like any mail.
+      SMTP_RELAY_HOST: postfix
+      SMTP_RELAY_PORT: "10025"
+      SMTP_RELAY_FROM: ${APP_MAIL_FROM}
+      # Webmail (Step 2.4): IMAP as the Dovecot master user, send via Postfix.
+      MAIL_IMAP_HOST: dovecot
+      MAIL_IMAP_PORT: "143"
+      MAIL_SUBMIT_HOST: postfix
+      MAIL_SUBMIT_PORT: "10025"
+      DOVECOT_MASTER_USER: apimaster
+      DOVECOT_MASTER_PASSWORD: ${DOVECOT_MASTER_PASSWORD}
+      ATTACHMENT_STORAGE_DIR: /var/lib/bw/attachments
+      PLATFORM_MX_HOST: ${MAIL_HOSTNAME}
+      PLATFORM_AUTODISCOVERY_HOST: ${MAIL_HOSTNAME}
+    volumes: [attachments:/var/lib/bw/attachments]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    ports: ["${API_PORT:-3000}:3000"]
+    networks: [internal]
+
+  web:
+    build:
+      context: ../../frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${PUBLIC_API_URL}
+    depends_on: [api]
+    ports: ["${WEB_PORT:-3001}:3001"]
+    networks: [internal]
+
+  # Writes each verified domain's DKIM key where Rspamd signs from (every 60 s).
+  dkim-sync:
+    build: ../../backend
+    command: ["node", "scripts/export-dkim-keys.mjs", "--out", "/var/lib/rspamd/dkim", "--watch", "60"]
+    user: root
+    environment:
+      DKIM_EXPORT_DATABASE_URL: postgres://dkim_exporter:${DKIM_EXPORTER_PASSWORD}@postgres:5432/business_workspace
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+    volumes: [dkim-keys:/var/lib/rspamd/dkim]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [internal]
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks: [internal]
+
+  rspamd:
+    build: { context: ../mail, target: rspamd }
+    environment: *mail-env
+    volumes: [dkim-keys:/var/lib/rspamd/dkim]
+    depends_on: [redis]
+    networks: [internal]
+
+  dovecot:
+    build: { context: ../mail, target: dovecot }
+    environment: *mail-env
+    volumes:
+      - vmail:/var/mail/vmail
+      - mail-tls:/etc/ssl/mail
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    ports:
+      - "${IMAP_PORT:-143}:143"
+      - "${IMAPS_PORT:-993}:993"
+      - "${POP3S_PORT:-995}:995"
+    networks: [internal]
+
+  postfix:
+    build: { context: ../mail, target: postfix }
+    environment: *mail-env
+    volumes: [mail-tls:/etc/ssl/mail]
+    depends_on: [dovecot, rspamd]
+    ports:
+      - "${SMTP_PORT:-25}:25"
+      - "${SUBMISSION_PORT:-587}:587"
+      # 10025 (internal API submission) is deliberately NOT published.
+    networks: [internal]
+
+  # Development relay: catches every outbound message instead of sending it.
+  # Web UI on :8025. In production set RELAY_HOST to the real smart host and
+  # remove this service (or leave it unused).
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["${MAILPIT_UI_PORT:-8025}:8025"]
+    networks: [internal]
+
+  clamav:
+    image: clamav/clamav:stable
+    profiles: [av]
+    networks: [internal]
+
+volumes:
+  pgdata:
+  vmail:
+  dkim-keys:
+  mail-tls:
+  attachments:
+
+networks:
+  internal:
+    ipam:
+      config:
+        # Fixed so the "internal only" rules (Postfix port 10025, the Dovecot
+        # master user, Rspamd's local signing) can name it exactly.
+        - subnet: ${INTERNAL_SUBNET}
