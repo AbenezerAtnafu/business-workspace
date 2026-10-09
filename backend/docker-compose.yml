@@ -12,6 +12,10 @@
 # or in .env (Compose reads .env for ${…} substitution — the DB URLs here are
 # fixed on purpose, so your local-dev DATABASE_URL in .env is not used).
 # The full stack with the mail server lives in ../infra/compose.
+# Ports are published on 127.0.0.1 only. Docker's port publishing bypasses
+# ufw/iptables rules, so on a VPS 0.0.0.0 would put the dev database
+# (postgres/postgres) on the internet. Reach them with SSH port forwarding,
+# or set BIND_ADDR=0.0.0.0 if you really want them public.
 name: bw-backend
 
 services:
@@ -20,7 +24,7 @@ services:
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: business_workspace
-    ports: ["${POSTGRES_PORT:-5433}:5432"]
+    ports: ["${BIND_ADDR:-127.0.0.1}:${POSTGRES_PORT:-5433}:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d business_workspace"]
@@ -59,7 +63,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./scripts:/app/scripts
-    ports: ["${API_PORT:-3000}:3000"]
+    ports: ["${BIND_ADDR:-127.0.0.1}:${API_PORT:-3000}:3000"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       mailpit: { condition: service_started }
@@ -70,7 +74,7 @@ services:
 
   mailpit:
     image: axllent/mailpit:latest
-    ports: ["${MAILPIT_UI_PORT:-8025}:8025"]
+    ports: ["${BIND_ADDR:-127.0.0.1}:${MAILPIT_UI_PORT:-8025}:8025"]
 
 volumes:
   pgdata:

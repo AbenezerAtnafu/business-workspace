@@ -14,6 +14,8 @@ npm run dev                  # http://localhost:3001 — matches the backend's A
 
 Other scripts: `npm run build`, `npm run lint`, `npm run typecheck`.
 
+**Port:** set `WEB_PORT` in `.env` (default 3001). It is used by `npm run dev`, by `npm start` (through `scripts/run-next.mjs`, because Next can't read its port from `.env` itself) and by `docker compose` for the host port. Keep the backend's `APP_BASE_URL` on the same port.
+
 ### With Docker
 
 ```bash

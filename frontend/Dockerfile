@@ -24,7 +24,9 @@ FROM deps AS dev
 ENV NODE_ENV=development
 COPY . .
 EXPOSE 3001
-CMD ["npm", "run", "dev"]
+# Port fixed here, not taken from package.json's "dev" script, so a local
+# port choice there (e.g. -p 3004) can't break the compose port mapping.
+CMD ["npx", "next", "dev", "-p", "3001"]
 
 # --- build ---------------------------------------------------------------------
 FROM deps AS build

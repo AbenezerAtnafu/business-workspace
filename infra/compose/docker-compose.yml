@@ -31,6 +31,11 @@ x-mail-env: &mail-env
   CLAMAV_MILTER: ${CLAMAV_MILTER:-}
   MILTER_DEFAULT_ACTION: ${MILTER_DEFAULT_ACTION:-tempfail}
 
+# Published ports: the mail ports (25, 587, 143, 993, 995) listen on every
+# interface because the world must reach them. The API, web app and Mailpit
+# listen on 127.0.0.1 only (HTTP_BIND_ADDR): Docker's port publishing bypasses
+# ufw, so 0.0.0.0 would expose them directly. Reach them through the reverse
+# proxy on the host, or SSH port forwarding on a dev server.
 services:
   postgres:
     restart: unless-stopped
@@ -93,7 +98,7 @@ services:
     volumes: [attachments:/var/lib/bw/attachments]
     depends_on:
       migrate: { condition: service_completed_successfully }
-    ports: ["${API_PORT:-3000}:3000"]
+    ports: ["${HTTP_BIND_ADDR:-127.0.0.1}:${API_PORT:-3000}:3000"]
     restart: unless-stopped
     networks: [internal]
 
@@ -106,7 +111,7 @@ services:
     init: true
     depends_on:
       api: { condition: service_healthy }
-    ports: ["${WEB_PORT:-3001}:3001"]
+    ports: ["${HTTP_BIND_ADDR:-127.0.0.1}:${WEB_PORT:-3001}:3001"]
     restart: unless-stopped
     networks: [internal]
 
@@ -175,7 +180,7 @@ services:
   # remove this service (or leave it unused).
   mailpit:
     image: axllent/mailpit:latest
-    ports: ["${MAILPIT_UI_PORT:-8025}:8025"]
+    ports: ["${HTTP_BIND_ADDR:-127.0.0.1}:${MAILPIT_UI_PORT:-8025}:8025"]
     networks: [internal]
 
   clamav:

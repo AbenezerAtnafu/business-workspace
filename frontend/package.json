@@ -4,9 +4,9 @@
   "private": true,
   "description": "Business Workspace Platform — frontend (Next.js). Screens map 1:1 to planning/screen-flow-inventory.md.",
   "scripts": {
-    "dev": "next dev -p 3004",
+    "dev": "node scripts/run-next.mjs dev",
     "build": "next build",
-    "start": "next start -p 3004",
+    "start": "node scripts/run-next.mjs start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },

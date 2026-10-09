@@ -11,6 +11,10 @@
 # reliably cross a bind mount, polling always works. Set it to false if the
 # CPU cost bothers you and reloads still happen without it.
 # The full stack (API, web, mail server) lives in ../infra/compose.
+# Ports are published on 127.0.0.1 only. Docker's port publishing bypasses
+# ufw/iptables rules, so on a VPS 0.0.0.0 would put the dev database
+# (postgres/postgres) on the internet. Reach them with SSH port forwarding,
+# or set BIND_ADDR=0.0.0.0 if you really want them public.
 name: bw-frontend
 
 services:
@@ -26,7 +30,7 @@ services:
       - ./lib:/app/lib
       # Next writes its build cache here; keep it in the container, not your folder.
       - next-cache:/app/.next
-    ports: ["${WEB_PORT:-3001}:3001"]
+    ports: ["${BIND_ADDR:-127.0.0.1}:${WEB_PORT:-3001}:3001"]
 
 volumes:
   next-cache:
