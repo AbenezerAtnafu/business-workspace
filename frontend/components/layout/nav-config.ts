@@ -45,12 +45,7 @@ export function navFor(role: Role): NavSection[] {
     {
       items: [
         { label: 'Setup checklist', href: '/setup-checklist', icon: ClipboardCheck, roles: ADMINS },
-        {
-          label: 'Mail',
-          href: '/mail',
-          icon: Inbox,
-          unavailable: 'Webmail needs the mail servers (Step 2.1) and Step 2.4, both not built yet.',
-        },
+        { label: 'Mail', href: '/mail', icon: Inbox },
       ],
     },
     {

@@ -26,7 +26,8 @@ async function bootstrap() {
   // `true` once that origin is actually fixed (Step 1.4+).
   // Retry-After must be exposed explicitly, or a cross-origin frontend can't
   // read it from a 429 (found 2026-10-07 — the UI always said "a few minutes").
-  app.enableCors({ origin: true, credentials: true, exposedHeaders: ['Retry-After'] });
+  // Content-Disposition: so webmail can name a downloaded attachment.
+  app.enableCors({ origin: true, credentials: true, exposedHeaders: ['Retry-After', 'Content-Disposition'] });
   app.use(cookieParser());
 
   // Step 2.5: Microsoft's Autodiscover (Outlook) POSTs an XML request body

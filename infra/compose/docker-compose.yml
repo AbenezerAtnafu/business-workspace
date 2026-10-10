@@ -94,6 +94,9 @@ services:
       DOVECOT_MASTER_PASSWORD: ${DOVECOT_MASTER_PASSWORD}
       ATTACHMENT_STORAGE_DIR: /var/lib/bw/attachments
       PLATFORM_MX_HOST: ${MAIL_HOSTNAME}
+      # What customers' SPF record must authorize: this server (it sends
+      # directly), plus the relay's include when RELAY_HOST is a real relay.
+      PLATFORM_SPF_INCLUDE: ${PLATFORM_SPF_INCLUDE:-a:${MAIL_HOSTNAME}}
       PLATFORM_AUTODISCOVERY_HOST: ${MAIL_HOSTNAME}
     volumes: [attachments:/var/lib/bw/attachments]
     depends_on:

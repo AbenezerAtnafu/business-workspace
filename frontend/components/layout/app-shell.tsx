@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { Building2, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
@@ -70,6 +71,8 @@ function Shell({ children }: { children: React.ReactNode }) {
   const sections = navFor(user.role);
   const home = homePathFor(user);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Mail needs the full width for its three panes; everything else reads better narrow.
+  const wide = usePathname()?.startsWith('/mail') ?? false;
 
   return (
     <div className="flex min-h-screen">
@@ -107,7 +110,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             <UserMenu />
           </div>
         </header>
-        <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 md:px-8">{children}</main>
+        <main className={wide ? 'w-full flex-1 px-4 py-4 md:px-6' : 'mx-auto w-full max-w-5xl flex-1 px-4 py-8 md:px-8'}>{children}</main>
       </div>
     </div>
   );

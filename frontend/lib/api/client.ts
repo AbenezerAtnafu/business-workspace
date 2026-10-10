@@ -165,3 +165,66 @@ async function parse<T>(res: Response): Promise<T> {
 
   return body as T;
 }
+
+/**
+ * Multipart upload with progress (webmail attachments). fetch() can't report
+ * upload progress, so this uses XMLHttpRequest; same token handling as api():
+ * one refresh + one retry on an expired token.
+ */
+export async function apiUpload<T = unknown>(
+  path: string,
+  file: File,
+  opts: { field?: string; onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
+): Promise<T> {
+  const attempt = () =>
+    new Promise<{ status: number; text: string; retryAfter: string | null }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_BASE}${path}`);
+      xhr.withCredentials = true;
+      xhr.setRequestHeader('Accept', 'application/json');
+      if (accessToken) xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) opts.onProgress?.(e.loaded / e.total);
+      };
+      xhr.onload = () => resolve({ status: xhr.status, text: xhr.responseText, retryAfter: xhr.getResponseHeader('Retry-After') });
+      xhr.onerror = () => reject(new ApiError({ status: 0, code: 'NETWORK_ERROR', message: 'Network error' }));
+      xhr.onabort = () => reject(new DOMException('Aborted', 'AbortError'));
+      opts.signal?.addEventListener('abort', () => xhr.abort());
+      const form = new FormData();
+      form.append(opts.field ?? 'file', file, file.name);
+      xhr.send(form);
+    });
+
+  let res = await attempt();
+  if (res.status === 401) {
+    const fresh = await refreshAccessToken();
+    if (fresh) res = await attempt();
+    if (!fresh || res.status === 401) {
+      accessToken = null;
+      sessionExpiredListeners.forEach((l) => l());
+    }
+  }
+  return parse<T>(new Response(res.text || null, { status: res.status, headers: res.retryAfter ? { 'Retry-After': res.retryAfter } : {} }));
+}
+
+/**
+ * Authenticated binary download (webmail attachments): the bearer token lives
+ * in memory, so a plain <a href> can't carry it. Returns the bytes and the
+ * server's file name; the caller saves it.
+ */
+export async function apiDownload(path: string): Promise<{ blob: Blob; fileName: string | null }> {
+  const go = () =>
+    fetch(`${API_BASE}${path}`, {
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+      credentials: 'include',
+    }).catch(() => {
+      throw new ApiError({ status: 0, code: 'NETWORK_ERROR', message: 'Network error' });
+    });
+  let res = await go();
+  if (res.status === 401 && (await refreshAccessToken())) res = await go();
+  if (!res.ok) await parse(res); // throws the API's error
+  const cd = res.headers.get('Content-Disposition') ?? '';
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+  const plain = /filename="([^"]+)"/i.exec(cd);
+  return { blob: await res.blob(), fileName: star ? decodeURIComponent(star[1]) : plain ? plain[1] : null };
+}

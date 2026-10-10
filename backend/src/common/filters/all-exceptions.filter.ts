@@ -73,6 +73,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       409: 'CONFLICT',
       410: 'GONE',
       422: 'UNPROCESSABLE',
+      413: 'PAYLOAD_TOO_LARGE', // multer's file-size limit (webmail attachments)
       429: 'RATE_LIMITED',
     };
     const code = codeForStatus[status] ?? 'ERROR';

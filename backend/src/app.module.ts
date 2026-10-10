@@ -14,18 +14,14 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { HealthModule } from './modules/health/health.module';
+import { WebmailModule } from './modules/webmail/webmail.module';
 
 // Role-based access control (RolesGuard, @Roles()) was built directly into
 // AuthModule during Step 1.5 — there is no separate RbacModule.
 //
-// Step 2.4 (Webmail app code + attachment staging) was deliberately
-// skipped, not just deferred silently — api-contract.md §8's endpoints
-// are, by ADR-002's own design, a thin REST proxy in front of a live
-// Dovecot/Postfix stack (Step 2.1, itself out of scope for this sandbox);
-// there is no genuine, testable, non-mock slice of that step buildable
-// without that infrastructure actually running. See claude/build-progress.md
-// for the full note. Step 2.5 below has no such dependency — it's pure
-// Postgres + HTTP, hence buildable now even with 2.4 skipped.
+// Step 2.4 (webmail, api-contract.md §8) is WebmailModule: a REST face over
+// the Step 2.1 mail stack (Dovecot over IMAP as a master user, Postfix's
+// internal submission port) — ADR-012.
 //
 // Phase 2 (planning/implementation-plan.md §3):
 // import { EmailModule } from './modules/email/email.module';
@@ -53,6 +49,7 @@ import { HealthModule } from './modules/health/health.module';
     AuditLogsModule,
     AdminModule,
     HealthModule,
+    WebmailModule,
   ],
 })
 export class AppModule {}

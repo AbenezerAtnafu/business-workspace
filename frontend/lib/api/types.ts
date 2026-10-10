@@ -298,3 +298,75 @@ export interface Organization {
   createdAt: string;
   updatedAt: string;
 }
+
+// --- Webmail (api-contract.md §8) -------------------------------------------
+
+export type MailFolderId = 'inbox' | 'sent' | 'drafts' | 'trash';
+export type MailAccessLevel = 'owner' | 'manage' | 'send_as' | 'read_only';
+
+/** GET /mail/mailboxes — what the caller can open in webmail. */
+export interface MailMailbox {
+  mailboxId: string;
+  address: string;
+  isShared: boolean;
+  access: MailAccessLevel;
+  status: 'active' | 'suspended';
+  /** Unread messages in Inbox; null when it couldn't be read (suspended, server down). */
+  unread: number | null;
+}
+
+/** GET /mailboxes/{id}/folders */
+export interface MailFolders {
+  data: { folder: MailFolderId; total: number; unread: number }[];
+  quota: { usedBytes: number; limitBytes: number | null } | null;
+  access: MailAccessLevel;
+}
+
+export interface MailAddress {
+  name: string | null;
+  address: string;
+}
+
+export interface MailMessageSummary {
+  /** Opaque; changes when the message moves folder or a draft is saved again. */
+  id: string;
+  folder: MailFolderId;
+  subject: string;
+  from: MailAddress | null;
+  to: MailAddress[];
+  cc: MailAddress[];
+  date: string | null;
+  read: boolean;
+  flagged: boolean;
+  hasAttachments: boolean;
+  sizeBytes: number;
+}
+
+export interface MailAttachmentMeta {
+  attachmentId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  inline: boolean;
+}
+
+export interface MailMessageDetail extends MailMessageSummary {
+  bcc: MailAddress[];
+  replyTo: MailAddress[];
+  messageIdHeader: string | null;
+  inReplyTo: string | null;
+  bodyText: string | null;
+  /** Untrusted HTML from the sender: only ever render it in a sandboxed iframe. */
+  bodyHtml: string | null;
+  attachments: MailAttachmentMeta[];
+}
+
+/** POST /mailboxes/{id}/attachments */
+export interface StagedAttachment {
+  attachmentId: string;
+  fileName: string;
+  sizeBytes: number;
+  mimeType: string | null;
+}
+
+export const MAIL_WRITE_ACCESS: MailAccessLevel[] = ['owner', 'manage', 'send_as'];
